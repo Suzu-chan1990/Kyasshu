@@ -507,3 +507,68 @@ location ~ "^{$q}/dictionary/(?<kyasshu_did>[A-Za-z0-9]{43})\\.dict\$" {
 }
 NGINX;
 }
+
+/**
+ * The same rules for Apache (and LiteSpeed): a block for the .htaccess in the WordPress root,
+ * above "# BEGIN WordPress". Needs mod_rewrite and mod_headers.
+ * The file checks use the absolute cache path, the rewrite targets the URL path.
+ */
+function kyasshu_apache_rules(): string {
+    $fs  = rtrim( KYASSHU_CACHE_ROOT, '/' );
+    $web = '/' . trim( (string) parse_url( content_url( 'cache/wp-rocket' ), PHP_URL_PATH ), '/' );
+
+    $variant = static function ( string $label, array $conds, string $suffix, string $env ) {
+        $out = "# {$label}\n"
+             . "RewriteCond %{ENV:KYS_OK} =1\n";
+        foreach ( $conds as $c ) $out .= "RewriteCond {$c}\n";
+        $out .= "RewriteCond \"%{ENV:KYS_FS}{$suffix}\" -f\n"
+              . "RewriteRule ^ \"%{ENV:KYS_WEB}{$suffix}\" [L{$env}]\n";
+        return $out;
+    };
+    $no_comp = ',E=no-gzip:1,E=no-brotli:1';
+
+    $rules  = "# BEGIN Kyasshu\n";
+    $rules .= "# Above \"# BEGIN WordPress\" in the .htaccess of the WordPress root.\n";
+    $rules .= "<IfModule mod_rewrite.c>\n";
+    $rules .= "RewriteEngine On\n\n";
+    $rules .= "# Cached pages only for GET/HEAD, no query string, not logged in, URL ending in \"/\"\n";
+    $rules .= "RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)\$\n";
+    $rules .= "RewriteCond %{QUERY_STRING} ^\$\n";
+    $rules .= "RewriteCond %{HTTP_COOKIE} !(wordpress_logged_in_|wp-postpass_|comment_author_) [NC]\n";
+    $rules .= "RewriteCond %{HTTP_HOST} ^[A-Za-z0-9.-]+\$\n";
+    $rules .= "RewriteCond %{REQUEST_URI} /\$\n";
+    $rules .= "RewriteRule ^ - [E=KYS_OK:1,E=KYS_FS:{$fs}/%{HTTP_HOST}%{REQUEST_URI}index.html,E=KYS_WEB:{$web}/%{HTTP_HOST}%{REQUEST_URI}index.html]\n\n";
+    $rules .= "# Dictionary the browser has (dcb/dcz): its hash is the file suffix\n";
+    $rules .= "RewriteCond %{ENV:KYS_OK} =1\n";
+    $rules .= "RewriteCond %{HTTP:Available-Dictionary} ^:([A-Za-z0-9]{43})=:\$\n";
+    $rules .= "RewriteRule ^ - [E=KYS_DICT:%1]\n\n";
+    $rules .= "# Best file the browser accepts: dcz > dcb > zstd > br > gzip > plain\n";
+    $rules .= $variant( 'dcz', [ '%{HTTP:Accept-Encoding} \bdcz\b [NC]', '%{ENV:KYS_DICT} !=""' ], '_dcz_%{ENV:KYS_DICT}', $no_comp );
+    $rules .= $variant( 'dcb', [ '%{HTTP:Accept-Encoding} \bdcb\b [NC]', '%{ENV:KYS_DICT} !=""' ], '_dcb_%{ENV:KYS_DICT}', $no_comp );
+    $rules .= $variant( 'zstd', [ '%{HTTP:Accept-Encoding} \bzstd\b [NC]' ], '_zst', $no_comp );
+    $rules .= $variant( 'br', [ '%{HTTP:Accept-Encoding} \bbr\b [NC]' ], '_br', $no_comp );
+    $rules .= $variant( 'gzip', [ '%{HTTP:Accept-Encoding} \bgzip\b [NC]' ], '_gzip', $no_comp );
+    $rules .= $variant( 'plain', [], '', '' );
+    $rules .= "</IfModule>\n\n";
+
+    $rules .= "# Headers per encoding (the files are already compressed: no second compression)\n";
+    $rules .= "<IfModule mod_headers.c>\n";
+    foreach ( [ '_gzip' => 'gzip', '_br' => 'br', '_zst' => 'zstd', '_dcb_[A-Za-z0-9]{43}' => 'dcb', '_dcz_[A-Za-z0-9]{43}' => 'dcz' ] as $suffix => $enc ) {
+        $rules .= "<FilesMatch \"^index\\.html{$suffix}\$\">\n"
+                . "    ForceType \"text/html; charset=UTF-8\"\n"
+                . "    SetEnv no-gzip 1\n"
+                . "    SetEnv no-brotli 1\n"
+                . "    Header set Content-Encoding {$enc}\n"
+                . "    Header merge Vary \"Accept-Encoding, Available-Dictionary\"\n"
+                . "</FilesMatch>\n";
+    }
+    $rules .= "# The dictionary itself: the browser keeps it and uses it for all pages of the site\n";
+    $rules .= "<FilesMatch \"^[A-Za-z0-9]{43}\\.dict\$\">\n"
+            . "    ForceType text/plain\n"
+            . "    Header set Use-As-Dictionary \"match=\\\"/*\\\", match-dest=(\\\"document\\\")\"\n"
+            . "    Header set Cache-Control \"public, max-age=2592000\"\n"
+            . "</FilesMatch>\n";
+    $rules .= "</IfModule>\n";
+    $rules .= "# END Kyasshu\n";
+    return $rules;
+}

@@ -10,6 +10,7 @@ All notable changes to Kyasshu are listed here.
 - Every format is tested with a small sample compression (zstd and DCZ also check the output), so a tool that is installed but does not work for the PHP user no longer counts as available. An old brotli without `-D` drops DCB automatically.
 
 ### Added
+- Apache / LiteSpeed rules (`.htaccess`, mod_rewrite + mod_headers) for all formats including DCB/DCZ, tested on Apache 2.4. The "Server-Regeln" card switches between nginx and Apache and preselects the server the site runs on. Generic copy in `docs/apache-kyasshu.conf`.
 - CLI tools also run through `proc_open()` when only `exec()` is disabled.
 
 ## [2.8.6] - 2026-11-22

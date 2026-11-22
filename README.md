@@ -2,12 +2,12 @@
 
 ![WordPress](https://img.shields.io/badge/WordPress-7.1%2B-blue)
 ![PHP](https://img.shields.io/badge/PHP-8.4%2B-purple)
-![nginx](https://img.shields.io/badge/nginx-required-009639)
+![Server](https://img.shields.io/badge/server-nginx%20%7C%20Apache-009639)
 ![License](https://img.shields.io/badge/license-GPLv2%2B-green)
 
 # Kyasshu キャッシュ
 
-Static page cache for WordPress on nginx. Kyasshu saves every page as a finished HTML file, together with pre-compressed copies (gzip, Brotli, zstd and the dictionary formats DCB and DCZ). nginx serves these files straight from disk, so a cached page never starts PHP or touches the database.
+Static page cache for WordPress on nginx and Apache. Kyasshu saves every page as a finished HTML file, together with pre-compressed copies (gzip, Brotli, zstd and the dictionary formats DCB and DCZ). The web server serves these files straight from disk, so a cached page never starts PHP or touches the database.
 
 Only Kyasshu's own preloader writes cache files. A normal visitor can never fill the cache with a broken, personal or half-loaded page.
 
@@ -19,7 +19,7 @@ Current version: `2.8.7` – see [CHANGELOG.md](CHANGELOG.md).
 
 * WordPress 7.1 or newer
 * PHP 8.4 or newer with zlib
-* nginx (the cache is served by nginx rules, see [nginx setup](#nginx-setup))
+* nginx, or Apache / LiteSpeed with mod_rewrite and mod_headers (see [Server setup](#server-setup))
 * `exec()` or `proc_open()` allowed for PHP, if you want Brotli, zstd or DCB/DCZ through the command-line tools
 * Optional: `brotli` command-line tool (1.1 or newer for DCB) or the PHP brotli extension
 * Optional: `zstd` command-line tool or the PHP zstd extension
@@ -35,7 +35,7 @@ Every format is only written if the server can produce it. Without Brotli or zst
 
 * Cache files in the WP Rocket layout: `wp-content/cache/wp-rocket/<host>/<path>/index.html`
 * Only the preloader writes cache files (secret token header). Visitors are always served, never written.
-* Atomic writes (temp file + rename) with a lock per page: nginx never sees a half-written file
+* Atomic writes (temp file + rename) with a lock per page: the web server never sees a half-written file
 * Only real HTML is cached; very short output (white screen, fatal error) is skipped
 * Tracking parameters (`utm_*`, `fbclid`, `gclid` …) are ignored; any other query string means a dynamic page and is not cached
 * REST API and AJAX requests are never cached
@@ -60,9 +60,9 @@ Every format is tested with a small sample compression, so it only counts if it 
 
 * Kyasshu builds the dictionary from the cached home page and a few other cached pages (max. 256 KB)
 * Pages announce it with `<link rel="compression-dictionary">`; the browser fetches it when idle
-* The file name is the SHA-256 of the dictionary in Base64. Kyasshu tunes the dictionary so this hash only contains letters and digits, so nginx can use the browser's `Available-Dictionary` header directly as file suffix. **No generated nginx config and no nginx reload when the dictionary changes.**
+* The file name is the SHA-256 of the dictionary in Base64. Kyasshu tunes the dictionary so this hash only contains letters and digits, so the web server can use the browser's `Available-Dictionary` header directly as file suffix. **No generated server config and no reload when the dictionary changes.**
 * "Wörterbuch neu bauen" rebuilds it and rebuilds the cache
-* Off by default, because it needs the nginx rules
+* Off by default, because it needs the server rules
 
 Browsers without dictionary support (currently everything except Chromium-based browsers) automatically get zstd, Brotli or gzip. Dictionaries only work over HTTPS.
 
@@ -97,7 +97,7 @@ Browsers without dictionary support (currently everything except Chromium-based 
 
 1. Download `kyasshu.zip` from the [latest release](https://github.com/Suzu-chan1990/Kyasshu/releases/latest)
 2. WordPress → Plugins → Add New → Upload Plugin, then activate
-3. Add the nginx rules (next section) and reload nginx
+3. Add the server rules (next section)
 4. Kyasshu → **Cache Leeren** to fill the cache
 5. Optional: switch on **Compression Dictionary** in the "🗜️ Kompression" card
 
@@ -105,9 +105,11 @@ Updates are offered in the WordPress plugin list as soon as a new GitHub release
 
 ---
 
-## nginx setup
+## Server setup
 
-The admin page (card "🗜️ Kompression" → "nginx-Regeln") shows the rules with the cache path of your site filled in. A generic copy is in [`docs/nginx-kyasshu.conf`](docs/nginx-kyasshu.conf).
+The admin page (tab "Kompression" → "Server-Regeln") shows the rules for nginx and for Apache / LiteSpeed, with the paths of your site filled in, and preselects the server the site runs on. Generic copies: [`docs/nginx-kyasshu.conf`](docs/nginx-kyasshu.conf) and [`docs/apache-kyasshu.conf`](docs/apache-kyasshu.conf).
+
+### nginx
 
 Put the rules into the `server { }` block before your `location` blocks, for example as an include:
 
@@ -148,6 +150,14 @@ curl -sI -H 'Accept-Encoding: gzip, br, zstd' https://example.com/ | grep -i con
 
 For DCB/DCZ open two pages in Chrome; on the second one DevTools → Network shows `Content-Encoding: dcz`.
 
+### Apache / LiteSpeed
+
+Put the block into the `.htaccess` of the WordPress root, **above** `# BEGIN WordPress` (or into the vhost, which is faster). It needs `mod_rewrite` and `mod_headers`; no restart is needed.
+
+* Same order and bypass rules as nginx; the dictionary hash is taken from `Available-Dictionary` with a rewrite condition
+* `no-gzip` / `no-brotli` stop mod_deflate and mod_brotli from compressing the files a second time
+* The dictionary is served with `Use-As-Dictionary` (without `id`) and a 30-day cache lifetime
+
 ---
 
 ## WP-CLI
@@ -172,7 +182,7 @@ kyasshu/
 ├── kyasshu.php            main file, settings, activation, GitHub updater
 ├── inc/
 │   ├── engine.php         output buffer and cache writer
-│   ├── compress.php       gzip / Brotli / zstd / DCB / DCZ, dictionary, nginx rules
+│   ├── compress.php       gzip / Brotli / zstd / DCB / DCZ, dictionary, server rules
 │   ├── filesystem.php     purge, smart purge, rewarm queue, stats
 │   ├── preload.php        preloader queue
 │   ├── cron.php           garbage collection
@@ -184,7 +194,7 @@ kyasshu/
 │   └── db-clean.php       database cleanup
 ├── images/kyasshu-banner.webp  banner on the settings page
 ├── lib/plugin-update-checker/   updates from GitHub releases
-└── docs/nginx-kyasshu.conf      generic nginx rules
+└── docs/                      generic nginx and Apache rules
 ```
 
 ---

@@ -323,7 +323,7 @@ function kyasshu_tab_compress( array $caps, ?array $dict ): void {
         <h3>Formate auf diesem Server</h3>
         <?php kyasshu_format_badges( $caps ); ?>
         <?php kyasshu_format_legend(); ?>
-        <span class="kys-desc">gzip und Brotli werden immer geschrieben, wenn verfügbar. Jede Seite liegt danach als <code>index.html</code> plus <code>_gzip</code>, <code>_br</code>, <code>_zst</code>, <code>_dcb_…</code>, <code>_dcz_…</code> im Cache; nginx liefert die beste Datei, die der Browser versteht.</span>
+        <span class="kys-desc">gzip und Brotli werden immer geschrieben, wenn verfügbar. Jede Seite liegt danach als <code>index.html</code> plus <code>_gzip</code>, <code>_br</code>, <code>_zst</code>, <code>_dcb_…</code>, <code>_dcz_…</code> im Cache; der Webserver liefert die beste Datei, die der Browser versteht.</span>
     </div>
 
     <div class="kys-grid">
@@ -332,7 +332,7 @@ function kyasshu_tab_compress( array $caps, ?array $dict ): void {
             <?php kyasshu_form_open( 'compress' ); ?>
             <?php
             kyasshu_switch( 'kyasshu_zstd', 'zstd', $caps['zstd'] !== '' ? 'Schreibt index.html_zst (Level 19)' : 'Nicht verfügbar – weder PHP-zstd noch zstd-CLI', kyasshu_get_setting( 'kyasshu_zstd', 1 ), $caps['zstd'] === '' );
-            kyasshu_switch( 'kyasshu_dict', 'Compression Dictionary (DCB / DCZ)', $has_dict_tool ? 'Eigenes Wörterbuch aus den Seiten der Website. Braucht die nginx-Regeln.' : 'Nicht verfügbar – braucht brotli-CLI ab 1.1 oder zstd', $dict_on, ! $has_dict_tool );
+            kyasshu_switch( 'kyasshu_dict', 'Compression Dictionary (DCB / DCZ)', $has_dict_tool ? 'Eigenes Wörterbuch aus den Seiten der Website. Braucht die Server-Regeln unten.' : 'Nicht verfügbar – braucht brotli-CLI ab 1.1 oder zstd', $dict_on, ! $has_dict_tool );
             ?>
             <span class="kys-desc">Eine Änderung leert den Cache, damit alle Seiten mit den neuen Formaten geschrieben werden.</span>
             <?php kyasshu_form_save(); ?>
@@ -362,9 +362,37 @@ function kyasshu_tab_compress( array $caps, ?array $dict ): void {
     </div>
 
     <div class="kys-card">
-        <h3>nginx-Regeln</h3>
-        <span class="kys-desc" style="margin-bottom:10px;">In den <code>server { }</code>-Block vor die <code>location</code>-Blöcke, danach <code>nginx -t</code> und Reload. Ersetzt einen älteren Kyasshu-Block, der nur <code>_gzip</code>/<code>_br</code> kannte. Ohne diese Regeln liegen die neuen Dateien nur ungenutzt im Cache.</span>
-        <textarea readonly class="kys-input kys-code" rows="18" onclick="this.select();"><?php echo esc_textarea( kyasshu_nginx_rules() ); ?></textarea>
+        <h3>Server-Regeln</h3>
+        <?php
+        // Preselect the server this site runs on (Apache and LiteSpeed both read the .htaccess)
+        $software = strtolower( (string) ( $_SERVER['SERVER_SOFTWARE'] ?? '' ) );
+        $server   = ( str_contains( $software, 'apache' ) || str_contains( $software, 'litespeed' ) ) ? 'apache' : 'nginx';
+        ?>
+        <div class="kys-seg" role="tablist">
+            <button type="button" class="kys-seg-btn<?php echo $server === 'nginx' ? ' active' : ''; ?>" data-kys-rules="nginx">nginx</button>
+            <button type="button" class="kys-seg-btn<?php echo $server === 'apache' ? ' active' : ''; ?>" data-kys-rules="apache">Apache / LiteSpeed</button>
+            <?php if ( $software !== '' ) : ?><span class="kys-seg-note">Dieser Server: <?php echo esc_html( (string) $_SERVER['SERVER_SOFTWARE'] ); ?></span><?php endif; ?>
+        </div>
+
+        <div class="kys-rules" data-kys-panel="nginx"<?php echo $server === 'nginx' ? '' : ' hidden'; ?>>
+            <span class="kys-desc" style="margin-bottom:10px;">In den <code>server { }</code>-Block vor die <code>location</code>-Blöcke, danach <code>nginx -t</code> und Reload. Ersetzt einen älteren Kyasshu-Block, der nur <code>_gzip</code>/<code>_br</code> kannte.</span>
+            <textarea readonly class="kys-input kys-code" rows="18" onclick="this.select();"><?php echo esc_textarea( kyasshu_nginx_rules() ); ?></textarea>
+        </div>
+        <div class="kys-rules" data-kys-panel="apache"<?php echo $server === 'apache' ? '' : ' hidden'; ?>>
+            <span class="kys-desc" style="margin-bottom:10px;">In die <code>.htaccess</code> im WordPress-Ordner, <strong>über</strong> <code># BEGIN WordPress</code> (oder in den vhost, das ist schneller). Braucht <code>mod_rewrite</code> und <code>mod_headers</code>; kein Reload nötig.</span>
+            <textarea readonly class="kys-input kys-code" rows="18" onclick="this.select();"><?php echo esc_textarea( kyasshu_apache_rules() ); ?></textarea>
+        </div>
+        <span class="kys-desc">Ohne diese Regeln liegen die Dateien nur ungenutzt im Cache. Ein neues Wörterbuch braucht keine Änderung an den Regeln.</span>
+        <script>
+            // Switch between the nginx and Apache rules without reloading the page
+            document.querySelectorAll('[data-kys-rules]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var want = btn.getAttribute('data-kys-rules');
+                    document.querySelectorAll('[data-kys-rules]').forEach(function (b) { b.classList.toggle('active', b === btn); });
+                    document.querySelectorAll('[data-kys-panel]').forEach(function (p) { p.hidden = p.getAttribute('data-kys-panel') !== want; });
+                });
+            });
+        </script>
     </div>
     <?php
 }
@@ -552,6 +580,13 @@ function kyasshu_admin_styles(): void {
         .kys-legend.is-on { background:#a7f3d0; border-color:#34d399; }
         .kys-legend.is-avail { background:#fff; border-color:#cbd5e1; }
         .kys-legend.is-off { background:#f1f5f9; border-color:#e2e8f0; }
+
+        .kys-seg { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+        .kys-seg-btn { background:var(--kys-bg); border:1px solid var(--kys-border); color:var(--kys-muted); padding:7px 14px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; }
+        .kys-seg-btn:hover { color:var(--kys-text); border-color:var(--kys-primary); }
+        .kys-seg-btn.active { background:linear-gradient(90deg,var(--kys-primary),var(--kys-accent)); border-color:transparent; color:#fff; }
+        .kys-seg-note { margin-left:auto; font-size:11px; color:#94a3b8; }
+        .kys-rules[hidden] { display:none; }
 
         .kys-table { width:100%; border-collapse:collapse; font-size:12px; }
         .kys-table td { padding:9px 12px; border-bottom:1px solid var(--kys-border); vertical-align:middle; word-break:break-all; }
