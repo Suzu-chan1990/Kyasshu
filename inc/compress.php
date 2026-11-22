@@ -27,29 +27,78 @@ add_action( 'wp_head', 'kyasshu_dictionary_link', 2 );
  * Capabilities of this server
  * ================================================================= */
 
-/** True if exec() can be used (some hosts disable it). */
-function kyasshu_can_exec(): bool {
-    static $ok = null;
-    if ( $ok === null ) {
-        $disabled = array_map( 'trim', explode( ',', (string) ini_get( 'disable_functions' ) ) );
-        $ok = function_exists( 'exec' ) && ! in_array( 'exec', $disabled, true );
+/** True if a PHP function exists and is not listed in disable_functions. */
+function kyasshu_fn_allowed( string $fn ): bool {
+    static $disabled = null;
+    if ( $disabled === null ) {
+        $disabled = array_filter( array_map( 'trim', explode( ',', (string) ini_get( 'disable_functions' ) ) ) );
     }
-    return $ok;
+    return function_exists( $fn ) && ! in_array( $fn, $disabled, true );
+}
+
+/**
+ * How shell commands can be run: 'exec', else 'proc_open' (some hosts only block exec),
+ * else '' (no CLI tools at all).
+ */
+function kyasshu_runner(): string {
+    static $runner = null;
+    if ( $runner === null ) {
+        $runner = kyasshu_fn_allowed( 'exec' ) ? 'exec' : ( kyasshu_fn_allowed( 'proc_open' ) ? 'proc_open' : '' );
+    }
+    return $runner;
+}
+
+/** True if shell commands can be run at all. */
+function kyasshu_can_exec(): bool {
+    return kyasshu_runner() !== '';
+}
+
+/**
+ * Runs a shell command. Returns [exit code, output] or null if commands cannot be run.
+ *
+ * @return array{0:int,1:string}|null
+ */
+function kyasshu_run( string $cmd ): ?array {
+    $runner = kyasshu_runner();
+    if ( $runner === 'exec' ) {
+        $out = [];
+        $rc  = 1;
+        @exec( $cmd, $out, $rc );
+        return [ (int) $rc, implode( "\n", $out ) ];
+    }
+    if ( $runner === 'proc_open' ) {
+        $pipes = [];
+        $proc  = @proc_open( $cmd, [ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes );
+        if ( ! is_resource( $proc ) ) return null;
+        $out = (string) stream_get_contents( $pipes[1] );
+        $err = (string) stream_get_contents( $pipes[2] );
+        fclose( $pipes[1] );
+        fclose( $pipes[2] );
+        return [ (int) proc_close( $proc ), trim( $out . "\n" . $err ) ];
+    }
+    return null;
 }
 
 /** Path of a CLI tool, or '' if it is not installed. */
 function kyasshu_cli( string $name ): string {
-    if ( ! kyasshu_can_exec() ) return '';
-    $out = [];
-    @exec( 'command -v ' . escapeshellarg( $name ) . ' 2>/dev/null', $out );
-    $path = trim( (string) ( $out[0] ?? '' ) );
-    // No is_executable(): with open_basedir it fails for /usr/bin even though exec works
+    $r    = kyasshu_run( 'command -v ' . escapeshellarg( $name ) . ' 2>/dev/null' );
+    $path = trim( strtok( (string) ( $r[1] ?? '' ), "\n" ) ?: '' );
+    // No is_executable(): with open_basedir it fails for /usr/bin even though the command works
     return ( $path !== '' && $path[0] === '/' ) ? $path : '';
 }
 
+/** A writable folder for test files and temp files of the CLI tools. */
+function kyasshu_work_dir(): string {
+    if ( is_dir( KYASSHU_CACHE_ROOT ) || @mkdir( KYASSHU_CACHE_ROOT, 0755, true ) ) {
+        if ( is_writable( KYASSHU_CACHE_ROOT ) ) return KYASSHU_CACHE_ROOT;
+    }
+    return trailingslashit( function_exists( 'get_temp_dir' ) ? get_temp_dir() : sys_get_temp_dir() );
+}
+
 /**
- * What this server can produce. Cached for an hour (and per request), so the engine does
- * not look for CLI tools on every cache write.
+ * What this server can really produce. Every candidate (PHP extension or CLI tool) is tested
+ * by compressing a small sample, so a format only counts if it actually works for this
+ * PHP user. Cached for an hour (and per request).
  *
  * @return array{gzip:string,br:string,zstd:string,dcb:string,dcz:string} '' = not available,
  *         otherwise how: 'php' (extension) or the CLI path
@@ -65,21 +114,49 @@ function kyasshu_capabilities( bool $fresh = false ): array {
     $brotli_cli = kyasshu_cli( 'brotli' );
     $zstd_cli   = kyasshu_cli( 'zstd' );
 
-    // brotli CLI 1.1+ has "-D FILE" (raw LZ77 dictionary); older versions cannot do dcb
-    $brotli_cli_dict = '';
-    if ( $brotli_cli !== '' ) {
-        $help = [];
-        @exec( escapeshellarg( $brotli_cli ) . ' -h 2>&1', $help );
-        if ( stripos( implode( "\n", $help ), '--dictionary' ) !== false ) $brotli_cli_dict = $brotli_cli;
-    }
-
-    $caps = [
+    $candidates = [
         'gzip' => function_exists( 'gzencode' ) ? 'php' : '',
         'br'   => function_exists( 'brotli_compress' ) ? 'php' : $brotli_cli,
         'zstd' => function_exists( 'zstd_compress' ) ? 'php' : $zstd_cli,
-        'dcb'  => kyasshu_php_brotli_has_dict() ? 'php' : $brotli_cli_dict,
+        'dcb'  => kyasshu_php_brotli_has_dict() ? 'php' : $brotli_cli,
         'dcz'  => function_exists( 'zstd_compress_dict' ) ? 'php' : $zstd_cli,
     ];
+
+    // Test sample and test dictionary: a format is only "available" if this works
+    $dir    = kyasshu_work_dir();
+    $sample = str_repeat( '<div class="card"><a href="/kyasshu/">Kyasshu test</a></div>', 40 );
+    $dfile  = $dir . 'kyasshu-test.tmp.' . uniqid( '', true ) . '.dict';
+    $dict_ok = @file_put_contents( $dfile, str_repeat( '<div class="card"><a href="/">dictionary</a></div>', 20 ) ) !== false;
+
+    $caps = [];
+    foreach ( $candidates as $fmt => $how ) {
+        $ok = false;
+        if ( $how !== '' ) {
+            switch ( $fmt ) {
+                case 'gzip':
+                    $r  = gzencode( $sample, 6 );
+                    $ok = is_string( $r ) && strncmp( $r, "\x1f\x8b", 2 ) === 0;
+                    break;
+                case 'br':
+                    $ok = kyasshu_compress_br( $sample, $dir, $how ) !== null;
+                    break;
+                case 'zstd':
+                    $r  = kyasshu_compress_zstd( $sample, $dir, $how );
+                    $ok = $r !== null && strncmp( $r, "\x28\xb5\x2f\xfd", 4 ) === 0;
+                    break;
+                case 'dcb':
+                    $ok = $dict_ok && kyasshu_compress_dcb( $sample, $dfile, str_repeat( "\0", 32 ), $dir, $how ) !== null;
+                    break;
+                case 'dcz':
+                    $r  = $dict_ok ? kyasshu_compress_dcz( $sample, $dfile, str_repeat( "\0", 32 ), $dir, $how ) : null;
+                    $ok = $r !== null && substr( $r, 40, 4 ) === "\x28\xb5\x2f\xfd";
+                    break;
+            }
+        }
+        $caps[ $fmt ] = $ok ? $how : '';
+    }
+    @unlink( $dfile );
+
     set_transient( 'kyasshu_caps', $caps, HOUR_IN_SECONDS );
     return $caps;
 }
@@ -95,8 +172,27 @@ function kyasshu_php_brotli_has_dict(): bool {
     }
 }
 
+/**
+ * Which formats are really in use right now: available on this server AND switched on
+ * (zstd switch, dictionary switch with a built dictionary). gzip and Brotli have no switch.
+ *
+ * @return array{gzip:bool,br:bool,zstd:bool,dcb:bool,dcz:bool}
+ */
+function kyasshu_active_formats(): array {
+    $caps = kyasshu_capabilities();
+    $dict = kyasshu_dictionary() !== null;
+    return [
+        'gzip' => $caps['gzip'] !== '',
+        'br'   => $caps['br'] !== '',
+        'zstd' => $caps['zstd'] !== '' && (bool) kyasshu_get_setting( 'kyasshu_zstd', 1 ),
+        'dcb'  => $caps['dcb'] !== '' && $dict,
+        'dcz'  => $caps['dcz'] !== '' && $dict,
+    ];
+}
+
 /* =================================================================
- * Compressors (each returns the compressed bytes, or null)
+ * Compressors (each returns the compressed bytes, or null).
+ * $how overrides the detected method (used by the capability test).
  * ================================================================= */
 
 /**
@@ -104,24 +200,22 @@ function kyasshu_php_brotli_has_dict(): bool {
  * $args gets the placeholders {in} and {out} (already shell-escaped).
  */
 function kyasshu_cli_compress( string $bin, string $args, string $data, string $dir ): ?string {
-    if ( $bin === '' || ! kyasshu_can_exec() ) return null;
+    if ( $bin === '' || $bin === 'php' || ! kyasshu_can_exec() ) return null;
     $tmp_in  = $dir . 'kyasshu-src.tmp.' . uniqid( '', true );
     $tmp_out = $tmp_in . '.out';
     if ( @file_put_contents( $tmp_in, $data ) === false ) return null;
 
     $cmd = escapeshellarg( $bin ) . ' ' . strtr( $args, [ '{in}' => escapeshellarg( $tmp_in ), '{out}' => escapeshellarg( $tmp_out ) ] ) . ' 2>/dev/null';
-    $rc  = 1;
-    $out = [];
-    @exec( $cmd, $out, $rc );
+    $r   = kyasshu_run( $cmd );
 
-    $result = ( $rc === 0 && is_file( $tmp_out ) ) ? file_get_contents( $tmp_out ) : false;
+    $result = ( $r !== null && $r[0] === 0 && is_file( $tmp_out ) ) ? file_get_contents( $tmp_out ) : false;
     @unlink( $tmp_in );
     @unlink( $tmp_out );
     return ( $result === false || $result === '' ) ? null : $result;
 }
 
-function kyasshu_compress_br( string $data, string $dir ): ?string {
-    $how = kyasshu_capabilities()['br'];
+function kyasshu_compress_br( string $data, string $dir, ?string $how = null ): ?string {
+    $how ??= kyasshu_capabilities()['br'];
     if ( $how === 'php' ) {
         $r = brotli_compress( $data, 11, 0 );
         return $r === false ? null : $r;
@@ -129,8 +223,8 @@ function kyasshu_compress_br( string $data, string $dir ): ?string {
     return kyasshu_cli_compress( $how, '-f -q 11 -o {out} {in}', $data, $dir );
 }
 
-function kyasshu_compress_zstd( string $data, string $dir ): ?string {
-    $how = kyasshu_capabilities()['zstd'];
+function kyasshu_compress_zstd( string $data, string $dir, ?string $how = null ): ?string {
+    $how ??= kyasshu_capabilities()['zstd'];
     if ( $how === 'php' ) {
         $r = zstd_compress( $data, 19 );
         return $r === false ? null : $r;
@@ -140,9 +234,10 @@ function kyasshu_compress_zstd( string $data, string $dir ): ?string {
 
 /**
  * dcb: 4 magic bytes, the dictionary's SHA-256, then a brotli stream that uses the dictionary.
+ * The brotli CLI needs version 1.1+ for "-D"; older versions fail and the test drops dcb.
  */
-function kyasshu_compress_dcb( string $data, string $dict_file, string $dict_hash_raw, string $dir ): ?string {
-    $how = kyasshu_capabilities()['dcb'];
+function kyasshu_compress_dcb( string $data, string $dict_file, string $dict_hash_raw, string $dir, ?string $how = null ): ?string {
+    $how ??= kyasshu_capabilities()['dcb'];
     if ( $how === '' ) return null;
     if ( $how === 'php' ) {
         $dict = file_get_contents( $dict_file );
@@ -158,8 +253,8 @@ function kyasshu_compress_dcb( string $data, string $dict_file, string $dict_has
  * dcz: 8 magic bytes (a zstd skippable frame), the dictionary's SHA-256, then a zstd frame
  * that uses the dictionary as raw content (level 19 keeps the window at 8 MB, as browsers require).
  */
-function kyasshu_compress_dcz( string $data, string $dict_file, string $dict_hash_raw, string $dir ): ?string {
-    $how = kyasshu_capabilities()['dcz'];
+function kyasshu_compress_dcz( string $data, string $dict_file, string $dict_hash_raw, string $dir, ?string $how = null ): ?string {
+    $how ??= kyasshu_capabilities()['dcz'];
     if ( $how === '' ) return null;
     if ( $how === 'php' ) {
         $dict = file_get_contents( $dict_file );

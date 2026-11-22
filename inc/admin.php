@@ -143,7 +143,7 @@ function kyasshu_render_admin() {
     $dict    = kyasshu_dictionary();
     $queue   = get_option( 'kyasshu_preload_queue', [] );
     $queue_n = is_array( $queue ) ? count( $queue ) : 0;
-    $formats = count( array_filter( $caps, fn( $v ) => $v !== '' ) );
+    $formats = count( array_filter( kyasshu_active_formats() ) );
     $banner  = plugins_url( 'images/kyasshu-banner.webp', KYASSHU_FILE );
 
     kyasshu_admin_styles();
@@ -160,7 +160,7 @@ function kyasshu_render_admin() {
             <?php endforeach; ?>
             <div class="kys-nav-info">
                 <span class="kys-chip"><span class="kys-dot" style="background:<?php echo $enabled ? '#10b981' : '#ef4444'; ?>"></span>Cache <?php echo $enabled ? 'aktiv' : 'aus'; ?></span>
-                <span class="kys-chip"><span class="kys-dot" style="background:#06b6d4"></span><?php echo (int) $formats; ?>/5 Formate</span>
+                <span class="kys-chip"><span class="kys-dot" style="background:#06b6d4"></span><?php echo (int) $formats; ?>/5 Formate aktiv</span>
             </div>
         </nav>
 
@@ -273,7 +273,7 @@ function kyasshu_tab_overview( array $caps, ?array $dict, int $queue_n ): void {
         <div class="kys-card">
             <h3>Formate auf diesem Server</h3>
             <?php kyasshu_format_badges( $caps ); ?>
-            <span class="kys-desc">Grün = wird geschrieben, sobald der Schalter an ist. Mit der Maus über ein Format zeigt, ob die PHP-Erweiterung oder das Kommandozeilen-Tool benutzt wird.</span>
+            <?php kyasshu_format_legend(); ?>
         </div>
     </div>
 
@@ -282,7 +282,7 @@ function kyasshu_tab_overview( array $caps, ?array $dict, int $queue_n ): void {
         <table class="kys-table kys-table-boxed">
             <tr><td>Cache-Ordner</td><td><code><?php echo esc_html( KYASSHU_CACHE_ROOT ); ?></code></td></tr>
             <tr><td>Log-Datei</td><td><code><?php echo esc_html( KYASSHU_CACHE_ROOT . 'kyasshu-debug.log' ); ?></code></td></tr>
-            <tr><td>PHP</td><td><?php echo esc_html( PHP_VERSION ); ?> · exec() <?php echo kyasshu_can_exec() ? '<span class="kys-pill kys-pill-ok">erlaubt</span>' : '<span class="kys-pill kys-pill-bad">gesperrt</span>'; ?></td></tr>
+            <tr><td>PHP</td><td><?php echo esc_html( PHP_VERSION ); ?> · Shell-Befehle <?php echo kyasshu_can_exec() ? '<span class="kys-pill kys-pill-ok">über ' . esc_html( kyasshu_runner() ) . '()</span>' : '<span class="kys-pill kys-pill-bad">gesperrt</span>'; ?></td></tr>
             <tr><td>WP-CLI</td><td><code>wp kyasshu flush</code> · <code>wp kyasshu gc</code> · <code>wp kyasshu warmup</code></td></tr>
         </table>
     </div>
@@ -322,6 +322,7 @@ function kyasshu_tab_compress( array $caps, ?array $dict ): void {
     <div class="kys-card">
         <h3>Formate auf diesem Server</h3>
         <?php kyasshu_format_badges( $caps ); ?>
+        <?php kyasshu_format_legend(); ?>
         <span class="kys-desc">gzip und Brotli werden immer geschrieben, wenn verfügbar. Jede Seite liegt danach als <code>index.html</code> plus <code>_gzip</code>, <code>_br</code>, <code>_zst</code>, <code>_dcb_…</code>, <code>_dcz_…</code> im Cache; nginx liefert die beste Datei, die der Browser versteht.</span>
     </div>
 
@@ -436,16 +437,34 @@ function kyasshu_tab_log(): void {
     <?php
 }
 
-/** Format badges: green = available, struck through = missing. */
+/**
+ * Format badges with three states:
+ * green = in use (works on this server and switched on), grey = works but switched off,
+ * struck through = does not work on this server (the capability test failed).
+ */
 function kyasshu_format_badges( array $caps ): void {
+    $active = kyasshu_active_formats();
     echo '<div class="kys-formats">';
     foreach ( [ 'gzip' => 'gzip', 'br' => 'Brotli', 'zstd' => 'zstd', 'dcb' => 'DCB', 'dcz' => 'DCZ' ] as $k => $label ) {
         $how = $caps[ $k ] ?? '';
-        $tip = $how === '' ? 'auf diesem Server nicht verfügbar' : ( $how === 'php' ? 'PHP-Erweiterung' : 'CLI: ' . $how );
-        echo '<span class="kys-format ' . ( $how === '' ? 'is-off' : 'is-on' ) . '" title="' . esc_attr( $tip ) . '">' . esc_html( $label )
-           . '<small>' . esc_html( $how === '' ? '–' : ( $how === 'php' ? 'PHP' : 'CLI' ) ) . '</small></span>';
+        if ( $how === '' ) {
+            $state = 'is-off';
+            $note  = 'fehlt';
+            $tip   = 'Auf diesem Server nicht verfügbar (Test fehlgeschlagen)';
+        } else {
+            $state = ! empty( $active[ $k ] ) ? 'is-on' : 'is-avail';
+            $note  = ! empty( $active[ $k ] ) ? 'aktiv' : 'aus';
+            $tip   = ( $how === 'php' ? 'PHP-Erweiterung' : 'CLI: ' . $how ) . ( $state === 'is-avail' ? ' – verfügbar, aber ausgeschaltet' : '' );
+        }
+        echo '<span class="kys-format ' . esc_attr( $state ) . '" title="' . esc_attr( $tip ) . '">' . esc_html( $label )
+           . '<small>' . esc_html( $note ) . '</small></span>';
     }
     echo '</div>';
+}
+
+function kyasshu_format_legend(): void {
+    echo '<span class="kys-desc"><span class="kys-legend is-on"></span>aktiv – wird geschrieben &nbsp; <span class="kys-legend is-avail"></span>verfügbar, aber aus &nbsp; <span class="kys-legend is-off"></span>fehlt auf dem Server. '
+       . 'Jedes Format wird mit einer kleinen Probe-Komprimierung getestet; mit der Maus darüber steht, ob die PHP-Erweiterung oder das Kommandozeilen-Tool benutzt wird.</span>';
 }
 
 /* =================================================================
@@ -526,8 +545,13 @@ function kyasshu_admin_styles(): void {
         .kys-formats { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
         .kys-format { display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid; }
         .kys-format small { font-size:9px; font-weight:800; opacity:.75; }
-        .kys-format.is-on { background:#ecfeff; border-color:#a5f3fc; color:#0e7490; }
+        .kys-format.is-on { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
+        .kys-format.is-avail { background:#ffffff; border-color:var(--kys-border); color:#475569; }
         .kys-format.is-off { background:#f8fafc; border-color:var(--kys-border); color:#94a3b8; text-decoration:line-through; }
+        .kys-legend { display:inline-block; width:9px; height:9px; border-radius:999px; border:1px solid; margin-right:4px; vertical-align:-1px; }
+        .kys-legend.is-on { background:#a7f3d0; border-color:#34d399; }
+        .kys-legend.is-avail { background:#fff; border-color:#cbd5e1; }
+        .kys-legend.is-off { background:#f1f5f9; border-color:#e2e8f0; }
 
         .kys-table { width:100%; border-collapse:collapse; font-size:12px; }
         .kys-table td { padding:9px 12px; border-bottom:1px solid var(--kys-border); vertical-align:middle; word-break:break-all; }

@@ -2,6 +2,16 @@
 
 All notable changes to Kyasshu are listed here.
 
+## [2.8.7] - 2026-11-23
+
+### Changed
+- Format badges have three states: green = active (works and is switched on), grey = available but switched off, struck through = missing. Before, DCB/DCZ showed green even with the dictionary switched off.
+- The chip in the tab bar counts active formats ("3/5 Formate aktiv").
+- Every format is tested with a small sample compression (zstd and DCZ also check the output), so a tool that is installed but does not work for the PHP user no longer counts as available. An old brotli without `-D` drops DCB automatically.
+
+### Added
+- CLI tools also run through `proc_open()` when only `exec()` is disabled.
+
 ## [2.8.6] - 2026-11-22
 
 ### Added

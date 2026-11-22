@@ -11,7 +11,7 @@ Static page cache for WordPress on nginx. Kyasshu saves every page as a finished
 
 Only Kyasshu's own preloader writes cache files. A normal visitor can never fill the cache with a broken, personal or half-loaded page.
 
-Current version: `2.8.6` – see [CHANGELOG.md](CHANGELOG.md).
+Current version: `2.8.7` – see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -20,7 +20,7 @@ Current version: `2.8.6` – see [CHANGELOG.md](CHANGELOG.md).
 * WordPress 7.1 or newer
 * PHP 8.4 or newer with zlib
 * nginx (the cache is served by nginx rules, see [nginx setup](#nginx-setup))
-* `exec()` allowed for PHP, if you want Brotli, zstd or DCB/DCZ through the command-line tools
+* `exec()` or `proc_open()` allowed for PHP, if you want Brotli, zstd or DCB/DCZ through the command-line tools
 * Optional: `brotli` command-line tool (1.1 or newer for DCB) or the PHP brotli extension
 * Optional: `zstd` command-line tool or the PHP zstd extension
 * Optional: WP-CLI for `wp kyasshu flush | gc | warmup`
@@ -52,7 +52,7 @@ Every format is only written if the server can produce it. Without Brotli or zst
 | `index.html_dcb_<hash>` | DCB – Brotli with dictionary | PHP brotli ≥ 0.15 or `brotli` CLI ≥ 1.1 |
 | `index.html_dcz_<hash>` | DCZ – zstd with dictionary | PHP zstd extension or `zstd` CLI |
 
-The admin page shows which formats this server can produce and how (extension or CLI).
+Every format is tested with a small sample compression, so it only counts if it really works for the PHP user. The admin page shows each format as active, available but switched off, or missing, and whether the PHP extension or the CLI tool is used.
 
 ### Compression dictionary (DCB / DCZ)
 
