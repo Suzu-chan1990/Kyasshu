@@ -1,0 +1,13 @@
+* text=auto
+*.php text eol=crlf
+*.md text eol=crlf
+*.conf text eol=lf
+*.png binary
+*.webp binary
+
+# Not part of the plugin ZIP built with "git archive"
+/assets export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore
+/CONTRIBUTING.md export-ignore
+/SECURITY.md export-ignore
