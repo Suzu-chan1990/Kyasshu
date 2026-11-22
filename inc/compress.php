@@ -37,54 +37,120 @@ function kyasshu_fn_allowed( string $fn ): bool {
 }
 
 /**
- * How shell commands can be run: 'exec', else 'proc_open' (some hosts only block exec),
- * else '' (no CLI tools at all).
+ * How CLI tools can be started: 'proc_open' (preferred: argument list, no shell, timeout),
+ * else 'exec' (shell command with escaped arguments), else '' (no CLI tools at all).
  */
 function kyasshu_runner(): string {
     static $runner = null;
     if ( $runner === null ) {
-        $runner = kyasshu_fn_allowed( 'exec' ) ? 'exec' : ( kyasshu_fn_allowed( 'proc_open' ) ? 'proc_open' : '' );
+        $runner = kyasshu_fn_allowed( 'proc_open' ) && kyasshu_fn_allowed( 'proc_get_status' ) && kyasshu_fn_allowed( 'proc_terminate' )
+            ? 'proc_open'
+            : ( kyasshu_fn_allowed( 'exec' ) ? 'exec' : '' );
     }
     return $runner;
 }
 
-/** True if shell commands can be run at all. */
+/** True if CLI tools can be started at all. */
 function kyasshu_can_exec(): bool {
     return kyasshu_runner() !== '';
 }
 
+/** Seconds a CLI tool may run before it is stopped (filter "kyasshu_cli_timeout"). */
+function kyasshu_cli_timeout(): int {
+    return max( 5, (int) apply_filters( 'kyasshu_cli_timeout', 30 ) );
+}
+
+/** Only absolute paths made of plain characters are accepted as program paths. */
+function kyasshu_safe_bin( string $bin ): bool {
+    return (bool) preg_match( '#^/[A-Za-z0-9._+/-]+$#D', $bin ) && strpos( $bin, '..' ) === false;
+}
+
 /**
- * Runs a shell command. Returns [exit code, output] or null if commands cannot be run.
+ * Runs a program with an argument list and returns [exit code, stdout], or null if it could
+ * not be started.
  *
+ * proc_open: the argument array goes straight to the program (no shell, so no shell
+ * injection is possible), stdin and stderr are /dev/null, and the process is killed after
+ * the timeout (exit code 124, like coreutils "timeout").
+ * exec: every argument is escaped with escapeshellarg(); the coreutils "timeout" command
+ * limits the run time when it exists.
+ *
+ * @param string[] $argv program path first, then the arguments
  * @return array{0:int,1:string}|null
  */
-function kyasshu_run( string $cmd ): ?array {
-    $runner = kyasshu_runner();
-    if ( $runner === 'exec' ) {
-        $out = [];
-        $rc  = 1;
-        @exec( $cmd, $out, $rc );
-        return [ (int) $rc, implode( "\n", $out ) ];
-    }
-    if ( $runner === 'proc_open' ) {
+function kyasshu_run( array $argv, ?int $timeout = null ): ?array {
+    $argv    = array_values( array_map( 'strval', $argv ) );
+    $timeout = $timeout ?? kyasshu_cli_timeout();
+    if ( ! $argv || ! kyasshu_safe_bin( $argv[0] ) ) return null;
+
+    if ( kyasshu_runner() === 'proc_open' ) {
         $pipes = [];
-        $proc  = @proc_open( $cmd, [ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes );
+        $proc  = @proc_open( $argv, [ 0 => [ 'file', '/dev/null', 'r' ], 1 => [ 'pipe', 'w' ], 2 => [ 'file', '/dev/null', 'w' ] ], $pipes );
         if ( ! is_resource( $proc ) ) return null;
-        $out = (string) stream_get_contents( $pipes[1] );
-        $err = (string) stream_get_contents( $pipes[2] );
+        stream_set_blocking( $pipes[1], false );
+
+        $out      = '';
+        $deadline = microtime( true ) + $timeout;
+        $rc       = -1;
+        while ( true ) {
+            $read = [ $pipes[1] ];
+            $w = $e = null;
+            if ( @stream_select( $read, $w, $e, 0, 200000 ) ) {
+                $chunk = (string) fread( $pipes[1], 65536 );
+                $out  .= $chunk;
+                if ( $chunk === '' && feof( $pipes[1] ) ) usleep( 20000 ); // output closed, process still ending
+            }
+            $status = proc_get_status( $proc );
+            if ( ! $status['running'] ) {
+                $out .= (string) stream_get_contents( $pipes[1] );
+                $rc   = (int) $status['exitcode'];
+                break;
+            }
+            if ( microtime( true ) > $deadline ) {
+                proc_terminate( $proc, 9 );
+                $rc = 124;
+                kyasshu_log( 'CLI TIMEOUT after ' . $timeout . 's: ' . basename( $argv[0] ) );
+                break;
+            }
+        }
         fclose( $pipes[1] );
-        fclose( $pipes[2] );
-        return [ (int) proc_close( $proc ), trim( $out . "\n" . $err ) ];
+        $close = proc_close( $proc );
+        // proc_get_status() reports the real exit code only once; proc_close() covers the rest
+        if ( $rc === -1 ) $rc = (int) $close;
+        return [ $rc, $out ];
+    }
+
+    if ( kyasshu_runner() === 'exec' ) {
+        static $timeout_bin = null;
+        if ( $timeout_bin === null ) {
+            $timeout_bin = '';
+            foreach ( [ '/usr/bin/timeout', '/bin/timeout' ] as $t ) {
+                if ( @is_file( $t ) ) { $timeout_bin = $t; break; }
+            }
+        }
+        $cmd = implode( ' ', array_map( 'escapeshellarg', $argv ) ) . ' </dev/null 2>/dev/null';
+        if ( $timeout_bin !== '' ) $cmd = escapeshellarg( $timeout_bin ) . ' -s KILL ' . (int) $timeout . ' ' . $cmd;
+        $lines = [];
+        $rc    = 1;
+        @exec( $cmd, $lines, $rc );
+        if ( (int) $rc === 124 || (int) $rc === 137 ) kyasshu_log( 'CLI TIMEOUT after ' . $timeout . 's: ' . basename( $argv[0] ) );
+        return [ (int) $rc, implode( "\n", $lines ) ];
     }
     return null;
 }
 
-/** Path of a CLI tool, or '' if it is not installed. */
+/**
+ * Path of a CLI tool, or '' if it is not installed. The usual folders are checked first;
+ * if open_basedir hides them, a fixed "command -v <name>" (name is a plain constant) is asked.
+ */
 function kyasshu_cli( string $name ): string {
-    $r    = kyasshu_run( 'command -v ' . escapeshellarg( $name ) . ' 2>/dev/null' );
-    $path = trim( strtok( (string) ( $r[1] ?? '' ), "\n" ) ?: '' );
-    // No is_executable(): with open_basedir it fails for /usr/bin even though the command works
-    return ( $path !== '' && $path[0] === '/' ) ? $path : '';
+    if ( ! preg_match( '/^[a-z0-9_-]+$/D', $name ) || ! kyasshu_can_exec() ) return '';
+    foreach ( [ '/usr/bin', '/usr/local/bin', '/bin', '/opt/homebrew/bin' ] as $dir ) {
+        if ( @is_file( "$dir/$name" ) ) return "$dir/$name";
+    }
+    $r    = kyasshu_run( [ '/bin/sh', '-c', 'command -v ' . escapeshellarg( $name ) ], 5 );
+    $path = $r && $r[0] === 0 ? trim( (string) strtok( $r[1], "\n" ) ) : '';
+    return kyasshu_safe_bin( $path ) ? $path : '';
 }
 
 /** A writable folder for test files and temp files of the CLI tools. */
@@ -197,18 +263,35 @@ function kyasshu_active_formats(): array {
 
 /**
  * Runs a CLI compressor on $data through temp files in $dir.
- * $args gets the placeholders {in} and {out} (already shell-escaped).
+ * $args is an argument list with the placeholders {in} and {out}; every element is passed as
+ * one argument (no shell parsing). Returns null on a failed start, a non-zero exit code
+ * (including a timeout), a missing or empty output file. Temp files are always removed.
+ *
+ * @param string[] $args
  */
-function kyasshu_cli_compress( string $bin, string $args, string $data, string $dir ): ?string {
-    if ( $bin === '' || $bin === 'php' || ! kyasshu_can_exec() ) return null;
-    $tmp_in  = $dir . 'kyasshu-src.tmp.' . uniqid( '', true );
+function kyasshu_cli_compress( string $bin, array $args, string $data, string $dir ): ?string {
+    if ( $bin === '' || $bin === 'php' || ! kyasshu_safe_bin( $bin ) || ! kyasshu_can_exec() ) return null;
+    $tmp_in  = $dir . 'kyasshu-src.tmp.' . bin2hex( random_bytes( 8 ) );
     $tmp_out = $tmp_in . '.out';
-    if ( @file_put_contents( $tmp_in, $data ) === false ) return null;
+    if ( @file_put_contents( $tmp_in, $data ) === false ) {
+        @unlink( $tmp_in );
+        return null;
+    }
 
-    $cmd = escapeshellarg( $bin ) . ' ' . strtr( $args, [ '{in}' => escapeshellarg( $tmp_in ), '{out}' => escapeshellarg( $tmp_out ) ] ) . ' 2>/dev/null';
-    $r   = kyasshu_run( $cmd );
+    $argv = [ $bin ];
+    foreach ( $args as $a ) $argv[] = strtr( (string) $a, [ '{in}' => $tmp_in, '{out}' => $tmp_out ] );
+    $r = kyasshu_run( $argv );
 
-    $result = ( $r !== null && $r[0] === 0 && is_file( $tmp_out ) ) ? file_get_contents( $tmp_out ) : false;
+    $result = false;
+    if ( $r === null ) {
+        kyasshu_log( 'CLI ERROR: could not start ' . basename( $bin ) );
+    } elseif ( $r[0] !== 0 ) {
+        kyasshu_log( 'CLI ERROR: ' . basename( $bin ) . ' exit code ' . $r[0] );
+    } elseif ( ! is_file( $tmp_out ) ) {
+        kyasshu_log( 'CLI ERROR: ' . basename( $bin ) . ' wrote no output file' );
+    } else {
+        $result = file_get_contents( $tmp_out );
+    }
     @unlink( $tmp_in );
     @unlink( $tmp_out );
     return ( $result === false || $result === '' ) ? null : $result;
@@ -220,7 +303,7 @@ function kyasshu_compress_br( string $data, string $dir, ?string $how = null ): 
         $r = brotli_compress( $data, 11, 0 );
         return $r === false ? null : $r;
     }
-    return kyasshu_cli_compress( $how, '-f -q 11 -o {out} {in}', $data, $dir );
+    return kyasshu_cli_compress( $how, [ '-f', '-q', '11', '-o', '{out}', '{in}' ], $data, $dir );
 }
 
 function kyasshu_compress_zstd( string $data, string $dir, ?string $how = null ): ?string {
@@ -229,7 +312,7 @@ function kyasshu_compress_zstd( string $data, string $dir, ?string $how = null )
         $r = zstd_compress( $data, 19 );
         return $r === false ? null : $r;
     }
-    return kyasshu_cli_compress( $how, '-q -f -19 --no-progress -o {out} {in}', $data, $dir );
+    return kyasshu_cli_compress( $how, [ '-q', '-f', '-19', '--no-progress', '-o', '{out}', '{in}' ], $data, $dir );
 }
 
 /**
@@ -244,7 +327,7 @@ function kyasshu_compress_dcb( string $data, string $dict_file, string $dict_has
         $body = $dict === false ? false : brotli_compress( $data, 11, 0, $dict );
         $body = $body === false ? null : $body;
     } else {
-        $body = kyasshu_cli_compress( $how, '-f -q 11 -D ' . escapeshellarg( $dict_file ) . ' -o {out} {in}', $data, $dir );
+        $body = kyasshu_cli_compress( $how, [ '-f', '-q', '11', '-D', $dict_file, '-o', '{out}', '{in}' ], $data, $dir );
     }
     return $body === null ? null : "\xff\x44\x43\x42" . $dict_hash_raw . $body;
 }
@@ -261,7 +344,7 @@ function kyasshu_compress_dcz( string $data, string $dict_file, string $dict_has
         $body = $dict === false ? false : zstd_compress_dict( $data, $dict, 19 );
         $body = $body === false ? null : $body;
     } else {
-        $body = kyasshu_cli_compress( $how, '-q -f -19 --no-progress -D ' . escapeshellarg( $dict_file ) . ' -o {out} {in}', $data, $dir );
+        $body = kyasshu_cli_compress( $how, [ '-q', '-f', '-19', '--no-progress', '-D', $dict_file, '-o', '{out}', '{in}' ], $data, $dir );
     }
     return $body === null ? null : "\x5e\x2a\x4d\x18\x20\x00\x00\x00" . $dict_hash_raw . $body;
 }

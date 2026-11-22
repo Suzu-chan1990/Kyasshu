@@ -11,7 +11,9 @@ All notable changes to Kyasshu are listed here.
 
 ### Added
 - Apache / LiteSpeed rules (`.htaccess`, mod_rewrite + mod_headers) for all formats including DCB/DCZ, tested on Apache 2.4. The "Server-Regeln" card switches between nginx and Apache and preselects the server the site runs on. Generic copy in `docs/apache-kyasshu.conf`.
-- CLI tools also run through `proc_open()` when only `exec()` is disabled.
+- CLI tools start through `proc_open()` with an argument list (no shell involved at all), stdin and stderr on `/dev/null`, and a timeout of 30 seconds (filter `kyasshu_cli_timeout`); a hanging tool is killed. If `proc_open()` is disabled, `exec()` is used with every argument escaped and the coreutils `timeout` command as limit.
+- Program paths must be absolute and only contain plain characters; temp file names use random bytes.
+- Failed starts, non-zero exit codes, timeouts and missing output files are written to the debug log; temp files are always removed.
 
 ## [2.8.6] - 2026-11-22
 
