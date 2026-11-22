@@ -144,16 +144,13 @@ function kyasshu_render_admin() {
     $queue   = get_option( 'kyasshu_preload_queue', [] );
     $queue_n = is_array( $queue ) ? count( $queue ) : 0;
     $formats = count( array_filter( $caps, fn( $v ) => $v !== '' ) );
-    $icon    = plugins_url( 'images/kyasshu-icon.webp', KYASSHU_FILE );
+    $banner  = plugins_url( 'images/kyasshu-banner.webp', KYASSHU_FILE );
 
     kyasshu_admin_styles();
     ?>
     <div class="kys-wrap">
         <div class="kys-header">
-            <div class="kys-title">
-                <img class="kys-logo" src="<?php echo esc_url( $icon ); ?>" alt="" width="40" height="40">
-                Kyasshu <span class="kys-sub">キャッシュ · Static Page Cache</span>
-            </div>
+            <div class="kys-title"><img class="kys-banner" src="<?php echo esc_url( $banner ); ?>" width="772" height="250" alt="Kyasshu"></div>
             <div class="kys-badge">v<?php echo esc_html( KYASSHU_VERSION ); ?></div>
         </div>
 
@@ -460,10 +457,10 @@ function kyasshu_admin_styles(): void {
     <style>
         .kys-wrap { --kys-primary:#06b6d4; --kys-accent:#7c3aed; --kys-bg:#f8fafc; --kys-surface:#ffffff; --kys-text:#0f1720; --kys-muted:#6b7280; --kys-border:#e2e8f0; --kys-success:#10b981; --kys-danger:#ef4444;
             max-width:1400px; margin:20px 20px 30px 0; font-family:'Inter',system-ui,sans-serif; color:var(--kys-text); }
-        .kys-header { background:linear-gradient(135deg,#0f1720 0%,#1e293b 100%); color:#fff; padding:14px 22px; border-radius:12px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 4px 12px rgba(0,0,0,.05); }
-        .kys-title { font-size:20px; font-weight:800; display:flex; align-items:center; gap:11px; }
-        .kys-logo { width:40px; height:40px; border-radius:10px; background:rgba(255,255,255,.06); }
-        .kys-sub { font-size:12px; font-weight:600; color:#94a3b8; margin-left:4px; }
+        /* Light cyan-to-lavender header with the banner, same as Tegatai Secure */
+        .kys-header { background:linear-gradient(120deg,#ecfeff 0%,#eef2ff 55%,#f5f3ff 100%); color:var(--kys-text); border:1px solid #cffafe; padding:18px 22px; border-radius:12px; margin-bottom:18px; min-height:56px; box-sizing:border-box; display:flex; justify-content:space-between; align-items:center; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+        .kys-title { display:flex; align-items:center; min-width:0; }
+        .kys-banner { display:block; height:110px; width:auto; max-width:100%; margin:-12px 0; filter:drop-shadow(0 2px 4px rgba(15,23,32,.12)); }
         .kys-badge { background:linear-gradient(90deg,var(--kys-primary),var(--kys-accent)); padding:5px 10px; border-radius:20px; font-size:10px; font-weight:700; color:#fff; border:1px solid rgba(255,255,255,.2); }
 
         .kys-nav { display:flex; align-items:center; gap:10px; background:var(--kys-surface); padding:12px 20px; border-radius:10px; border:1px solid var(--kys-border); margin-bottom:18px; overflow-x:auto; box-shadow:0 1px 3px rgba(0,0,0,.02); }
@@ -547,7 +544,7 @@ function kyasshu_admin_styles(): void {
         .kys-terminal { background:#0f172a; color:#10b981; font-family:monospace; font-size:12px; padding:15px; border-radius:8px; height:420px; overflow-y:auto; white-space:pre-wrap; border:1px solid #1e293b; }
         .kys-toast { min-width:200px; background:#0f1720; color:#fff; text-align:center; border-radius:6px; padding:10px 16px; position:fixed; z-index:99999; left:50%; transform:translateX(-50%); bottom:40px; font-size:13px; font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,.15); transition:opacity .5s; }
 
-        @media (max-width: 782px) { .kys-wrap { margin:12px 10px 24px 0; } .kys-header { padding:12px 16px; } .kys-title { font-size:17px; } .kys-sub, .kys-nav-info { display:none; } .kys-grid { grid-template-columns:1fr; } }
+        @media (max-width: 782px) { .kys-wrap { margin:12px 10px 24px 0; } .kys-header { padding:15px 16px; } .kys-banner { height:auto; margin:0; } .kys-nav-info { display:none; } .kys-grid { grid-template-columns:1fr; } }
     </style>
     <?php
 }

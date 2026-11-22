@@ -182,7 +182,7 @@ kyasshu/
 │   ├── tweaks.php         frontend tweaks
 │   ├── heartbeat.php      Heartbeat control
 │   └── db-clean.php       database cleanup
-├── images/kyasshu-icon.webp    icon on the settings page
+├── images/kyasshu-banner.webp  banner on the settings page
 ├── lib/plugin-update-checker/   updates from GitHub releases
 └── docs/nginx-kyasshu.conf      generic nginx rules
 ```
