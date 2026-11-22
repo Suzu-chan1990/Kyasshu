@@ -1,7 +1,7 @@
 <p align="center"><img src="./assets/banner-772x250.png" width="772" alt="Kyasshu"></p>
 
-![WordPress](https://img.shields.io/badge/WordPress-6.4%2B-blue)
-![PHP](https://img.shields.io/badge/PHP-8.1%2B-purple)
+![WordPress](https://img.shields.io/badge/WordPress-7.1%2B-blue)
+![PHP](https://img.shields.io/badge/PHP-8.4%2B-purple)
 ![nginx](https://img.shields.io/badge/nginx-required-009639)
 ![License](https://img.shields.io/badge/license-GPLv2%2B-green)
 
@@ -17,8 +17,8 @@ Current version: `2.8.6` – see [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
-* WordPress 6.4 or newer
-* PHP 8.1 or newer with zlib
+* WordPress 7.1 or newer
+* PHP 8.4 or newer with zlib
 * nginx (the cache is served by nginx rules, see [nginx setup](#nginx-setup))
 * `exec()` allowed for PHP, if you want Brotli, zstd or DCB/DCZ through the command-line tools
 * Optional: `brotli` command-line tool (1.1 or newer for DCB) or the PHP brotli extension

@@ -4,8 +4,8 @@
  * Plugin URI:        https://github.com/Suzu-chan1990/Kyasshu
  * Description:       Static page cache (nginx-served HTML + gzip/brotli/zstd and compression dictionaries DCB/DCZ), preloader and frontend tweaks.
  * Version:           2.8.6
- * Requires at least: 6.4
- * Requires PHP:      8.1
+ * Requires at least: 7.1
+ * Requires PHP:      8.4
  * Author:            Saguya
  * Author URI:        https://github.com/Suzu-chan1990
  * License:           GPL-2.0-or-later
