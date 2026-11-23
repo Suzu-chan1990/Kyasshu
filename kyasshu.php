@@ -3,7 +3,7 @@
  * Plugin Name:       Kyasshu
  * Plugin URI:        https://github.com/Suzu-chan1990/Kyasshu
  * Description:       Static page cache (nginx-served HTML + gzip/brotli/zstd and compression dictionaries DCB/DCZ), preloader and frontend tweaks.
- * Version:           2.8.7
+ * Version:           2.8.9
  * Requires at least: 7.1
  * Requires PHP:      8.4
  * Author:            Saguya
@@ -15,7 +15,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'KYASSHU_VERSION', '2.8.7' );
+define( 'KYASSHU_VERSION', '2.8.9' );
 define( 'KYASSHU_FILE', __FILE__ );
 define( 'KYASSHU_PATH', plugin_dir_path( __FILE__ ) );
 

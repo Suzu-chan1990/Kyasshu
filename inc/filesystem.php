@@ -5,6 +5,11 @@ add_action('save_post', 'kyasshu_on_post_save', 10, 3);
 add_action('comment_post', 'kyasshu_on_comment_post');
 add_action('wp_trash_post', 'kyasshu_on_post_save');
 add_action('kyasshu_rewarm', 'kyasshu_run_rewarm');
+// Public hooks for themes and plugins:
+//   do_action( 'kyasshu_purge_tree', $url )  removes the cached page of $url and of every URL below it
+//   do_action( 'kyasshu_warm_later', $url )  lets the preloader fetch $url about a minute later
+add_action('kyasshu_purge_tree', 'kyasshu_purge_tree');
+add_action('kyasshu_warm_later', function ( $url ) { kyasshu_queue_rewarm( (string) $url ); });
 add_action('save_post_page', function () { delete_transient( 'kyasshu_dependent_urls' ); });
 foreach ( [ 'added_term_meta', 'updated_term_meta' ] as $kyasshu_hook ) {
     add_action( $kyasshu_hook, 'kyasshu_on_artist_image', 10, 3 );
@@ -108,7 +113,7 @@ function kyasshu_store_rewarm_queue(): void {
     $new = array_keys( (array) ( $GLOBALS['kyasshu_rewarm_urls'] ?? [] ) );
     if ( ! $new ) return;
     $queue = get_option( 'kyasshu_rewarm_queue', [] );
-    $queue = array_slice( array_values( array_unique( array_merge( is_array( $queue ) ? $queue : [], $new ) ) ), 0, 300 );
+    $queue = array_slice( array_values( array_unique( array_merge( is_array( $queue ) ? $queue : [], $new ) ) ), 0, 1000 );
     update_option( 'kyasshu_rewarm_queue', $queue, false );
     if ( ! wp_next_scheduled( 'kyasshu_rewarm' ) ) {
         wp_schedule_single_event( time() + 60, 'kyasshu_rewarm' );
@@ -131,6 +136,35 @@ function kyasshu_run_rewarm(): void {
         delete_option( 'kyasshu_rewarm_queue' );
     }
     kyasshu_log( 'REWARM: ' . count( $batch ) . ' URLs' );
+}
+
+/**
+ * Removes the cached files of a URL and of everything below it (e.g. a day packet of the
+ * theme with its hour packets). Never the whole host: the home page itself is refused.
+ */
+function kyasshu_purge_tree( $url ): void {
+    $path = urldecode( (string) parse_url( (string) $url, PHP_URL_PATH ) );
+    if ( $path === '' || trim( $path, '/' ) === '' || strpos( $path, '..' ) !== false ) return;
+    $host = preg_replace( '/[^a-zA-Z0-9.-]/', '', (string) parse_url( (string) $url, PHP_URL_HOST ) );
+    if ( $host === '' ) return;
+
+    $dir = KYASSHU_CACHE_ROOT . $host . '/' . trim( $path, '/' );
+    if ( ! is_dir( $dir ) ) return;
+
+    $count = 0;
+    try {
+        $it = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $dir, FilesystemIterator::SKIP_DOTS ) );
+        foreach ( $it as $file ) {
+            $name = $file->getFilename();
+            if ( $file->isFile() && ( str_starts_with( $name, 'index.html' ) || $name === '.kyasshu-lock' ) ) {
+                @unlink( $file->getPathname() );
+                $count++;
+            }
+        }
+    } catch ( Throwable $e ) {
+        return;
+    }
+    if ( $count ) kyasshu_log( "PURGE TREE: $url ($count files)" );
 }
 
 function kyasshu_on_comment_post($comment_id) {

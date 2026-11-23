@@ -367,11 +367,28 @@ function kyasshu_tab_compress( array $caps, ?array $dict ): void {
         // Preselect the server this site runs on (Apache and LiteSpeed both read the .htaccess)
         $software = strtolower( (string) ( $_SERVER['SERVER_SOFTWARE'] ?? '' ) );
         $server   = ( str_contains( $software, 'apache' ) || str_contains( $software, 'litespeed' ) ) ? 'apache' : 'nginx';
+        $paths    = kyasshu_rule_paths();
         ?>
+        <div class="kys-detect kys-detect-<?php echo esc_attr( $paths['status'] ); ?>">
+            <div class="kys-detect-head">
+                <?php if ( $paths['status'] === 'ok' ) : ?>
+                    ✓ Automatisch erkannt – die Regeln unten sind fertig für diese Seite.
+                <?php elseif ( $paths['status'] === 'mismatch' ) : ?>
+                    ⚠ Die Pfade passen nicht eindeutig zusammen – Regeln bitte vor dem Einbau prüfen.
+                <?php else : ?>
+                    Document Root unbekannt – die Pfade stammen aus der WordPress-Konfiguration.
+                <?php endif; ?>
+            </div>
+            <table class="kys-table">
+                <tr><td>Webserver</td><td><?php echo esc_html( $software !== '' ? (string) $_SERVER['SERVER_SOFTWARE'] : 'unbekannt' ); ?></td></tr>
+                <tr><td>Document Root</td><td><code><?php echo esc_html( $paths['docroot'] !== '' ? $paths['docroot'] : '–' ); ?></code></td></tr>
+                <tr><td>Cache-Ordner</td><td><code><?php echo esc_html( $paths['fs'] ); ?></code></td></tr>
+                <tr><td>URL-Pfad</td><td><code><?php echo esc_html( $paths['web'] ); ?></code><?php if ( $paths['web'] !== $paths['web_from_url'] ) : ?> <span class="kys-desc" style="display:inline">(WordPress meldet <code><?php echo esc_html( $paths['web_from_url'] ); ?></code>)</span><?php endif; ?></td></tr>
+            </table>
+        </div>
         <div class="kys-seg" role="tablist">
             <button type="button" class="kys-seg-btn<?php echo $server === 'nginx' ? ' active' : ''; ?>" data-kys-rules="nginx">nginx</button>
             <button type="button" class="kys-seg-btn<?php echo $server === 'apache' ? ' active' : ''; ?>" data-kys-rules="apache">Apache / LiteSpeed</button>
-            <?php if ( $software !== '' ) : ?><span class="kys-seg-note">Dieser Server: <?php echo esc_html( (string) $_SERVER['SERVER_SOFTWARE'] ); ?></span><?php endif; ?>
         </div>
 
         <div class="kys-rules" data-kys-panel="nginx"<?php echo $server === 'nginx' ? '' : ' hidden'; ?>>
@@ -587,6 +604,11 @@ function kyasshu_admin_styles(): void {
         .kys-seg-btn.active { background:linear-gradient(90deg,var(--kys-primary),var(--kys-accent)); border-color:transparent; color:#fff; }
         .kys-seg-note { margin-left:auto; font-size:11px; color:#94a3b8; }
         .kys-rules[hidden] { display:none; }
+        .kys-detect { border:1px solid var(--kys-border); border-radius:8px; margin-bottom:14px; overflow:hidden; }
+        .kys-detect-head { padding:9px 12px; font-size:12px; font-weight:700; border-bottom:1px solid var(--kys-border); }
+        .kys-detect-ok .kys-detect-head { background:#ecfdf5; color:#047857; }
+        .kys-detect-mismatch .kys-detect-head { background:#fff7ed; color:#c2410c; }
+        .kys-detect-unknown .kys-detect-head { background:var(--kys-bg); color:var(--kys-muted); }
 
         .kys-table { width:100%; border-collapse:collapse; font-size:12px; }
         .kys-table td { padding:9px 12px; border-bottom:1px solid var(--kys-border); vertical-align:middle; word-break:break-all; }

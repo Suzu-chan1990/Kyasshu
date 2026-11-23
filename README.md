@@ -11,7 +11,7 @@ Static page cache for WordPress on nginx and Apache. Kyasshu saves every page as
 
 Only Kyasshu's own preloader writes cache files. A normal visitor can never fill the cache with a broken, personal or half-loaded page.
 
-Current version: `2.8.7` – see [CHANGELOG.md](CHANGELOG.md).
+Current version: `2.8.9` – see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -74,6 +74,13 @@ Browsers without dictionary support (currently everything except Chromium-based 
 * The preloader works through a queue in batches of 20 via WP-Cron (home page, optional sitemap, pages, categories)
 * Hourly garbage collection removes files older than the cache timeout (the dictionary is kept)
 
+### Hooks for themes and plugins
+
+* `do_action( 'kyasshu_purge_tree', $url )` – removes the cached page of `$url` and of every URL below it
+* `do_action( 'kyasshu_warm_later', $url )` – the preloader fetches `$url` about a minute later
+* `add_filter( 'kyasshu_min_length', … )` – minimum size of a page that may be cached (default 1000 bytes, white-screen protection); for fragments that are short on purpose
+* `add_filter( 'kyasshu_cli_timeout', … )` – seconds a compression tool may run (default 30)
+
 ### Frontend tweaks
 
 * Instant Page: preload on mouse hover
@@ -107,7 +114,7 @@ Updates are offered in the WordPress plugin list as soon as a new GitHub release
 
 ## Server setup
 
-The admin page (tab "Kompression" → "Server-Regeln") shows the rules for nginx and for Apache / LiteSpeed, with the paths of your site filled in, and preselects the server the site runs on. Generic copies: [`docs/nginx-kyasshu.conf`](docs/nginx-kyasshu.conf) and [`docs/apache-kyasshu.conf`](docs/apache-kyasshu.conf).
+The admin page (tab "Kompression" → "Server-Regeln") shows the rules for nginx and for Apache / LiteSpeed and preselects the server the site runs on. The paths are detected automatically – also for a renamed content folder – and the card shows whether document root, cache folder and URL path fit together. Generic copies: [`docs/nginx-kyasshu.conf`](docs/nginx-kyasshu.conf) and [`docs/apache-kyasshu.conf`](docs/apache-kyasshu.conf).
 
 ### nginx
 
@@ -131,12 +138,12 @@ What the rules do:
 
 1. Skip the cache for POST requests, query strings and logged-in users or commenters
 2. Pick the best file that exists: dictionary (DCZ/DCB) → zstd → Brotli → gzip → plain HTML
-3. Hand it to a location that sets the right `Content-Encoding`, `Content-Type` and `Vary`
+3. Hand it to a location that sets the right `Content-Type`; `Content-Encoding` and `Vary` come from the server level
 4. Serve the dictionary with `Use-As-Dictionary` and a 30-day cache lifetime
 
 Notes:
 
-* `add_header` inside a location replaces the `add_header` lines of the server block. Repeat your security headers in these locations if you set any.
+* The rules set their own headers (`Content-Encoding`, `Vary`, `Use-As-Dictionary`) on server level and the Kyasshu locations have no `add_header`, so security headers of the server block (HSTS, CSP, X-Frame-Options …) also reach cached pages.
 * Regexes that contain `{43}` must stay in quotes.
 * The rules also block `kyasshu-debug.log` and the lock files from the web.
 * No nginx module is needed: the files are already compressed.

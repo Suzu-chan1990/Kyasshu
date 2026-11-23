@@ -133,8 +133,10 @@ function kyasshu_write_cache($buffer) {
     }
 
     // White-screen protection: unusually short output (e.g. fatal error) is not cached.
-    if ( strlen($buffer) < 1000 ) {
-        kyasshu_log("ABORT: Buffer too small (< 1000 chars). Potential WSOD or Error.");
+    // Fragments that are short on purpose (theme card packets) lower the limit via the filter.
+    $min = max( 1, (int) apply_filters( 'kyasshu_min_length', 1000 ) );
+    if ( strlen($buffer) < $min ) {
+        kyasshu_log("ABORT: Buffer too small (< $min chars). Potential WSOD or Error.");
         return $buffer;
     }
 
