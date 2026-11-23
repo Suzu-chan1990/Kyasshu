@@ -138,6 +138,7 @@ Notes:
 
 * `add_header` inside a location replaces the `add_header` lines of the server block. Repeat your security headers in these locations if you set any.
 * Regexes that contain `{43}` must stay in quotes.
+* The rules also block `kyasshu-debug.log` and the lock files from the web.
 * No nginx module is needed: the files are already compressed.
 * A CDN in front of the site may not pass DCB/DCZ through. zstd, Brotli and gzip still work.
 
@@ -157,6 +158,7 @@ Put the block into the `.htaccess` of the WordPress root, **above** `# BEGIN Wor
 * Same order and bypass rules as nginx; the dictionary hash is taken from `Available-Dictionary` with a rewrite condition
 * `no-gzip` / `no-brotli` stop mod_deflate and mod_brotli from compressing the files a second time
 * The dictionary is served with `Use-As-Dictionary` (without `id`) and a 30-day cache lifetime
+* Other plugins' blocks (WordPress core, security plugins) can stay where they are; only the Kyasshu block has to be above `# BEGIN WordPress`. Do not run a second page cache (WP Rocket uses the same cache folder).
 
 ---
 

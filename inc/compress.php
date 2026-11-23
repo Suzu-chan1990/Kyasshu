@@ -588,6 +588,9 @@ location ~ "^{$q}/dictionary/(?<kyasshu_did>[A-Za-z0-9]{43})\\.dict\$" {
     add_header Use-As-Dictionary 'match="/*", match-dest=("document"), id="\$kyasshu_did"';
     add_header Cache-Control "public, max-age=2592000";
 }
+
+# Debug log and lock files of Kyasshu are not for visitors
+location ~ ^{$q}/(kyasshu-debug\.log|.*\.kyasshu-lock)\$ { deny all; }
 NGINX;
 }
 
@@ -651,7 +654,11 @@ function kyasshu_apache_rules(): string {
             . "    Header set Use-As-Dictionary \"match=\\\"/*\\\", match-dest=(\\\"document\\\")\"\n"
             . "    Header set Cache-Control \"public, max-age=2592000\"\n"
             . "</FilesMatch>\n";
-    $rules .= "</IfModule>\n";
+    $rules .= "</IfModule>\n\n";
+    $rules .= "# Debug log and lock files of Kyasshu are not for visitors\n";
+    $rules .= "<FilesMatch \"^(kyasshu-debug\\.log|\\.kyasshu-lock)\$\">\n"
+            . "    Require all denied\n"
+            . "</FilesMatch>\n";
     $rules .= "# END Kyasshu\n";
     return $rules;
 }
